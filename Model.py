@@ -21,11 +21,6 @@ class CoreModel:
 
         timestamp = str(datetime.utcnow().timestamp())
 
-        item = {
-            'itemId': str(uuid.uuid1()),
-            'createdAt': timestamp,
-            'updatedAt': timestamp,
-        }
 
         for field in self.__getattribute__("_required_fields"):
             if not values.get(field, False):
@@ -33,6 +28,14 @@ class CoreModel:
                 logging.error(error_message)
                 self.error_response = response(402, json.dumps({"error": error_message}))
                 return None
+
+        item = {
+            'createdAt': timestamp,
+            'updatedAt': timestamp,
+        }
+
+        if values.get('itemId', False):
+            item.update({'itemId': str(uuid.uuid1())})
 
         item.update(values)
         self._load(item)
