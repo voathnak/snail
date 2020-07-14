@@ -34,7 +34,7 @@ class CoreModel:
             'updatedAt': timestamp,
         }
 
-        if values.get('itemId', False):
+        if not values.get('itemId', False):
             item.update({'itemId': str(uuid.uuid1())})
 
         item.update(values)
@@ -51,7 +51,7 @@ class CoreModel:
             if item:
                 self._has_record = True
                 self._load(item)
-                return self.__getattribute__('itemId')
+                return self
             else:
                 self._has_record = False
         except ClientError as e:
