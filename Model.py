@@ -6,7 +6,7 @@ from datetime import datetime
 import boto3
 from botocore.exceptions import ClientError
 
-from snippets import response
+from snippets.utils import response
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -115,6 +115,23 @@ class CoreModel:
         try:
             self._table.delete_item(Key={'itemId': itemId})
             self._has_record = False
+        except ClientError as e:
+            print(e.response['Error']['Message'])
+
+    def get_dict(self, itemId, fields=None):
+        # to get dictionary instead of object
+        # itemId: the record ID string to query item
+        # fields: to specify the return dictionary key (leave it empty or None to get all fields)
+
+        try:
+            item = self._table.get_item(Key={'itemId': itemId}).get('Item', [])
+            if item:
+                self._has_record = True
+                if fields:
+                    return {key: item.get(key) for key in item if key in fields}
+                return item
+            else:
+                self._has_record = False
         except ClientError as e:
             print(e.response['Error']['Message'])
 
