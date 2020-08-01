@@ -1,3 +1,4 @@
+import decimal
 import json
 import logging
 import uuid
@@ -89,6 +90,8 @@ class CoreModel:
                     if key != "itemId" and key != 'createdAt':
                         if self.__getattribute__(key) != value:
                             changed = True
+                            if isinstance(value, float):
+                                value = decimal.Decimal(value)
                             UpdateExpression += "#{} = :{}, ".format(key[:-2], key)
                             ExpressionAttributeValues[":{}".format(key)] = value
                             ExpressionAttributeNames["#{}".format(key[:-2])] = key
@@ -135,8 +138,23 @@ class CoreModel:
         except ClientError as e:
             print(e.response['Error']['Message'])
 
+    def dict_datatype(self, dictionary):
+        def _iterate(dictionary):
+            for key, attr in dictionary.items():
+                if isinstance(attr, decimal.Decimal):
+                    attr = float(attr)
+                elif isinstance(attr, dict):
+                    attr = self.dict_datatype(attr)
+                yield key, attr
+
+        return dict(_iterate(dictionary))
+
     def _load(self, item):
         for key, value in item.items():
+            if isinstance(value, decimal.Decimal):
+                value = float(value)
+            elif isinstance(value, dict):
+                value = self.dict_datatype(value)
             if key[0] != "_":
                 self.__setattr__(key, value)
 
