@@ -161,6 +161,10 @@ class CoreModel:
     def _from_dict(self, record_dict):
         record = self.__class__(self._table)
         for key, value in record_dict.items():
+            if isinstance(value, decimal.Decimal):
+                value = float(value)
+            elif isinstance(value, dict):
+                value = self.dict_datatype(value)
             record.__setattr__(key, value)
         return record
 
