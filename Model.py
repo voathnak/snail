@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 
 import boto3
+from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 
 from snippets.utils import response
@@ -57,6 +58,22 @@ class CoreModel:
                 self._has_record = False
         except ClientError as e:
             print(e.response['Error']['Message'])
+
+    def search(self, attr, value):
+        try:
+            records = self._table.scan(FilterExpression=Attr(attr).eq(value)).get('Items', [])
+        except Exception as e:
+            print("#" * 100)
+            print("###", "Getting records from", self._table)
+            print("###", e)
+            print("#" * 100)
+            raise
+        if records:
+            self._has_record = True
+            return [self._from_dict(record) for record in records]
+        else:
+            self._has_record = False
+            return []
 
     def list(self):
         try:
