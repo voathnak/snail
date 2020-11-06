@@ -8,6 +8,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 
+from constants.http_status_code import BAD_REQUEST
 from snippets.utils import response
 
 dynamodb = boto3.resource('dynamodb')
@@ -28,7 +29,7 @@ class CoreModel:
             if not values.get(field, False):
                 error_message = "field: {} is required!".format(field)
                 logging.error(error_message)
-                self.error_response = response(402, json.dumps({"error": error_message}))
+                self.error_response = response(BAD_REQUEST, json.dumps({"error": error_message}))
                 return None
 
         item = {
@@ -40,11 +41,13 @@ class CoreModel:
             item.update({'itemId': str(uuid.uuid1())})
 
         item.update(values)
-        self._load(item)
 
-        self._has_record = True
         # write the record to the database
-        self._table.put_item(Item=item)
+        record = self._table.put_item(Item=item)
+        if record:
+            self._load(item)
+            self._has_record = True
+
         return self.__getattribute__('itemId')
 
     def get(self, itemId):
