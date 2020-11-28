@@ -1,23 +1,31 @@
 import json
 import logging
+import os
 import uuid
 from datetime import datetime
 
 import boto3
+import pymongo as pymongo
 from botocore.exceptions import ClientError
 
 from snippets import response
 
 dynamodb = boto3.resource('dynamodb')
 
+connection_url = os.environ['MONGODB_URI']
+client = pymongo.MongoClient(connection_url)
+db = client.test
 
 class CoreModel:
 
     def __init__(self, table_name):
         self._table = dynamodb.Table(table_name)
         self._has_record = False
+        self._collection = db[self.__getattribute__("_collection_name")]
+        self._unique_key = self.__getattribute__("_unique_key")
 
-    def save(self, values):
+
+    def create(self, values):
 
         timestamp = str(datetime.utcnow().timestamp())
 
@@ -34,24 +42,26 @@ class CoreModel:
             'updatedAt': timestamp,
         }
 
-        if values.get('itemId', False):
-            item.update({'itemId': str(uuid.uuid1())})
+        if values.get('_id', False):
+            item.update({'_id': str(uuid.uuid1())})
 
         item.update(values)
         self._load(item)
 
         self._has_record = True
         # write the record to the database
-        self._table.put_item(Item=item)
-        return self.__getattribute__('itemId')
+        # self._table.put_item(Item=item)
+        creating_doc = self._collection.insert_one(values)
+        if creating_doc:
+            return creating_doc.inserted_id
 
-    def get(self, itemId):
+    def get(self, _id):
         try:
-            item = self._table.get_item(Key={'itemId': itemId}).get('Item', [])
+            item = self._table.get_item(Key={'_id': _id}).get('Item', [])
             if item:
                 self._has_record = True
                 self._load(item)
-                return self.__getattribute__('itemId')
+                return self.__getattribute__('_id')
             else:
                 self._has_record = False
         except ClientError as e:
@@ -59,7 +69,9 @@ class CoreModel:
 
     def list(self):
         try:
-            records = self._table.scan().get('Items', [])
+            # records = self._table.scan().get('Items', [])
+            records = self._collection.find()
+
         except Exception as e:
             print("#" * 100)
             print("###", "Getting records from", self._table)
@@ -73,9 +85,9 @@ class CoreModel:
             self._has_record = False
             return []
 
-    def update(self, itemId, update_dict):
+    def update(self, _id, update_dict):
         try:
-            item = self._table.get_item(Key={'itemId': itemId}).get('Item', [])
+            item = self._table.get_item(Key={'_id': _id}).get('Item', [])
 
             if item:
                 self._load(item)
@@ -86,7 +98,7 @@ class CoreModel:
                 ExpressionAttributeValues = {}
                 ExpressionAttributeNames = {}
                 for key, value in update_dict.items():
-                    if key != "itemId" and key != 'createdAt':
+                    if key != "_id" and key != 'createdAt':
                         if self.__getattribute__(key) != value:
                             changed = True
                             UpdateExpression += "#{} = :{}, ".format(key[:-2], key)
@@ -95,9 +107,9 @@ class CoreModel:
                 if changed:
                     updated_record = self._table.update_item(
                         Key={
-                            'itemId': itemId
+                            '_id': _id
                         },
-                        ConditionExpression='attribute_exists(itemId)',
+                        ConditionExpression='attribute_exists(_id)',
                         UpdateExpression=UpdateExpression[:-2],
                         ExpressionAttributeValues=ExpressionAttributeValues,
                         ExpressionAttributeNames=ExpressionAttributeNames,
@@ -111,9 +123,9 @@ class CoreModel:
         except ClientError as e:
             print(e.response['Error']['Message'])
 
-    def delete(self, itemId):
+    def delete(self, _id):
         try:
-            self._table.delete_item(Key={'itemId': itemId})
+            self._table.delete_item(Key={'_id': _id})
             self._has_record = False
         except ClientError as e:
             print(e.response['Error']['Message'])
@@ -126,7 +138,10 @@ class CoreModel:
     def _from_dict(self, record_dict):
         record = self.__class__(self._table)
         for key, value in record_dict.items():
-            record.__setattr__(key, value)
+            if key == "_id":
+                record.__setattr__(key, str(value))
+            else:
+                record.__setattr__(key, value)
         return record
 
     def __iter__(self):
