@@ -1,71 +1,83 @@
+#######################################################################################################################
+import decimal
 import json
 import logging
 import os
 import uuid
 from datetime import datetime
 
-import boto3
 import pymongo as pymongo
-from botocore.exceptions import ClientError
+from bson import ObjectId
 
-from snippets import response
+from snail.constants.http_status_code import BAD_REQUEST
+from snail.utils import response
 
-dynamodb = boto3.resource('dynamodb')
 
 connection_url = os.environ['MONGODB_URI']
+dbname = os.environ["DB_NAME"]
 client = pymongo.MongoClient(connection_url)
-db = client.test
+
+db = client[dbname]
+
+# db = client.test
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
 
 class CoreModel:
+    _required_fields = []
+    _output_id = True
 
-    def __init__(self, table_name):
-        self._table = dynamodb.Table(table_name)
+    def __init__(self):
         self._has_record = False
         self._collection = db[self.__getattribute__("_collection_name")]
-        self._unique_key = self.__getattribute__("_unique_key")
-
+        self._required_fields = self.__getattribute__("_required_fields")
+        self._error_response = None
 
     def create(self, values):
 
         timestamp = str(datetime.utcnow().timestamp())
 
-
         for field in self.__getattribute__("_required_fields"):
             if not values.get(field, False):
                 error_message = "field: {} is required!".format(field)
                 logging.error(error_message)
-                self.error_response = response(402, json.dumps({"error": error_message}))
+                self._error_response = response(BAD_REQUEST, json.dumps({"error": error_message}))
                 return None
 
         item = {
-            'createdAt': timestamp,
-            'updatedAt': timestamp,
+                'createdAt': timestamp,
+                'updatedAt': timestamp,
         }
 
         if values.get('_id', False):
             item.update({'_id': str(uuid.uuid1())})
 
         item.update(values)
-        self._load(item)
 
         self._has_record = True
         # write the record to the database
-        # self._table.put_item(Item=item)
-        creating_doc = self._collection.insert_one(values)
+        creating_doc = self._collection.insert_one(item)
         if creating_doc:
-            return creating_doc.inserted_id
+            self.get(creating_doc.inserted_id)
+            return self
 
     def get(self, _id):
         try:
-            item = self._table.get_item(Key={'_id': _id}).get('Item', [])
-            if item:
-                self._has_record = True
-                self._load(item)
-                return self.__getattribute__('_id')
-            else:
-                self._has_record = False
-        except ClientError as e:
-            print(e.response['Error']['Message'])
+            record = self._collection.find_one({"_id": ObjectId(_id)})
+
+        except Exception as e:
+            logger.error("Getting specific record from {}".format(self._collection))
+            logger.error(e)
+            raise
+        if record:
+            self._has_record = True
+            self._load(record)
+            return self
+        else:
+            self._has_record = False
+            return None
 
     def list(self):
         try:
@@ -73,10 +85,8 @@ class CoreModel:
             records = self._collection.find()
 
         except Exception as e:
-            print("#" * 100)
-            print("###", "Getting records from", self._table)
-            print("###", e)
-            print("#" * 100)
+            logger.error("Getting records from {}".format(self._collection))
+            logger.error(e)
             raise
         if records:
             self._has_record = True
@@ -85,63 +95,57 @@ class CoreModel:
             self._has_record = False
             return []
 
-    def update(self, _id, update_dict):
+    def update(self, _id, values):
         try:
-            item = self._table.get_item(Key={'_id': _id}).get('Item', [])
-
-            if item:
-                self._load(item)
-                self._has_record = True
-                changed = False
-                update_dict.update({'updatedAt': str(datetime.utcnow().timestamp())})
-                UpdateExpression = 'SET '
-                ExpressionAttributeValues = {}
-                ExpressionAttributeNames = {}
-                for key, value in update_dict.items():
-                    if key != "_id" and key != 'createdAt':
-                        if self.__getattribute__(key) != value:
-                            changed = True
-                            UpdateExpression += "#{} = :{}, ".format(key[:-2], key)
-                            ExpressionAttributeValues[":{}".format(key)] = value
-                            ExpressionAttributeNames["#{}".format(key[:-2])] = key
-                if changed:
-                    updated_record = self._table.update_item(
-                        Key={
-                            '_id': _id
-                        },
-                        ConditionExpression='attribute_exists(_id)',
-                        UpdateExpression=UpdateExpression[:-2],
-                        ExpressionAttributeValues=ExpressionAttributeValues,
-                        ExpressionAttributeNames=ExpressionAttributeNames,
-                        ReturnValues='ALL_NEW',
-                    )
-                    self._load(updated_record.get('Attributes'))
-                    return updated_record.get('Attributes')
-                return "No Changed"
-            else:
-                self._has_record = False
-        except ClientError as e:
-            print(e.response['Error']['Message'])
+            self._collection.update_one({"_id": ObjectId(_id)}, {"$set": values})
+        except Exception as e:
+            logger.error("Updating records from {}".format(self._collection))
+            logger.error(e)
+            raise
+        return self.get(_id)
 
     def delete(self, _id):
+        # Todo: will need to implement deleting multiple records
         try:
-            self._table.delete_item(Key={'_id': _id})
-            self._has_record = False
-        except ClientError as e:
-            print(e.response['Error']['Message'])
+            self._collection.delete_one({"_id": ObjectId(_id)})
+
+        except Exception as e:
+            logger.error("Deleting records from {}".format(self._collection))
+            logger.error(e)
+            raise
+
+        return True
+
+    def dict_datatype(self, dictionary):
+        def _iterate(data):
+            for key, attr in data.items():
+                if isinstance(attr, decimal.Decimal):
+                    attr = float(attr)
+                elif isinstance(attr, dict):
+                    attr = self.dict_datatype(attr)
+                yield key, attr
+
+        return dict(_iterate(dictionary))
 
     def _load(self, item):
         for key, value in item.items():
-            if key[0] != "_":
+            if isinstance(value, dict):
+                value = self.dict_datatype(value)
+            if key[0] != "_" or key == "_id":
                 self.__setattr__(key, value)
 
     def _from_dict(self, record_dict):
-        record = self.__class__(self._table)
+        record = self.__class__()
         for key, value in record_dict.items():
             if key == "_id":
                 record.__setattr__(key, str(value))
             else:
                 record.__setattr__(key, value)
+            if isinstance(value, decimal.Decimal):
+                value = float(value)
+            elif isinstance(value, dict):
+                value = self.dict_datatype(value)
+            record.__setattr__(key, value)
         return record
 
     def __iter__(self):
@@ -152,8 +156,13 @@ class CoreModel:
     def __setattr__(self, name, value):
         if name == 'createdAt' or name == 'updatedAt':
             self.__dict__[name] = datetime.fromtimestamp(float(value)).strftime("%b %d %Y %H:%M:%S")
+        elif name == '_id' and self._output_id:
+            self.id = str(value)
+            self.__dict__[name] = value
         else:
             self.__dict__[name] = value
 
     def __bool__(self):
         return self._has_record
+
+#######################################################################################################################
