@@ -43,7 +43,7 @@ class CoreModel:
             if not values.get(field, False):
                 error_message = "field: {} is required!".format(field)
                 logging.error(error_message)
-                self._error_response = response(BAD_REQUEST, json.dumps({"error": error_message}))
+                self._error_response = response(BAD_REQUEST, {"error": error_message})
                 return None
 
         item = {
@@ -63,14 +63,12 @@ class CoreModel:
             self.get(creating_doc.inserted_id)
             return self
 
-    def get(self, _id):
-        try:
-            record = self._collection.find_one({"_id": ObjectId(_id)})
+    def _fetch_error(self, e):
+        logger.error("Getting specific record from {}".format(self._collection))
+        logger.error(e)
+        raise
 
-        except Exception as e:
-            logger.error("Getting specific record from {}".format(self._collection))
-            logger.error(e)
-            raise
+    def recorded(self, record):
         if record:
             self._has_record = True
             self._load(record)
@@ -79,9 +77,24 @@ class CoreModel:
             self._has_record = False
             return None
 
+    def get_one(self):
+        try:
+            record = self._collection.find_one()
+
+        except Exception as e:
+            self._fetch_error(e)
+        return self.recorded(record)
+
+    def get(self, _id):
+        try:
+            record = self._collection.find_one({"_id": ObjectId(_id)})
+
+        except Exception as e:
+            self._fetch_error(e)
+        return self.recorded(record)
+
     def list(self):
         try:
-            # records = self._table.scan().get('Items', [])
             records = self._collection.find()
 
         except Exception as e:
